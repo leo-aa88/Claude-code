@@ -92,6 +92,7 @@ claude-code/
 │   ├── utils/
 │   │   ├── autoUpdater.ts         # Version check [PATCHED — remote check disabled]
 │   │   ├── computerUse/           # Computer use integration layer
+│   │   │   └── executor.ts        # 22KB CLI executor — wraps Swift/Rust native modules
 │   │   ├── claudeInChrome/        # Chrome integration layer
 │   │   ├── sandbox/               # Sandbox adapter
 │   │   ├── settings/              # Settings system
@@ -138,7 +139,7 @@ claude-code/
 │   │   ├── claude-for-chrome-mcp/ # Chrome automation (8 source files)
 │   │   │   └── src/
 │   │   │       ├── index.ts       # Exports
-│   │   │       ├── bridgeClient.ts # 37KB — Chrome bridge
+│   │   │       ├── bridgeClient.ts # 37KB — Chrome bridge via WebSocket
 │   │   │       ├── browserTools.ts # 25KB — browser tool definitions
 │   │   │       ├── mcpServer.ts   # MCP server
 │   │   │       ├── mcpSocketClient.ts # WebSocket client
@@ -152,35 +153,64 @@ claude-code/
 │   │   └── computer-use-input/    # Input device bridge
 │   │       └── js/index.js        # JS loader for Rust binary
 │   │
-│   └── @anthropic-ai/            # Anthropic SDK sources (105 files)
-│       ├── sandbox-runtime/       # Sandbox system (14 files)
-│       │   └── dist/
-│       │       ├── sandbox/
-│       │       │   ├── sandbox-manager.js    # Core sandbox manager
-│       │       │   ├── sandbox-config.js     # Config/schema
-│       │       │   ├── macos-sandbox-utils.js # macOS sandbox profiles
-│       │       │   ├── linux-sandbox-utils.js # Linux seccomp/namespaces
-│       │       │   ├── generate-seccomp-filter.js # Seccomp BPF generator
-│       │       │   ├── http-proxy.js         # HTTP egress proxy
-│       │       │   ├── socks-proxy.js        # SOCKS proxy
-│       │       │   └── sandbox-violation-store.js
-│       │       └── utils/
+│   ├── @anthropic-ai/            # Anthropic SDK sources (105 files)
+│   │   ├── sandbox-runtime/       # Sandbox system (14 files, 162KB)
+│   │   │   └── dist/
+│   │   │       ├── sandbox/
+│   │   │       │   ├── sandbox-manager.js    # 31KB — core orchestrator
+│   │   │       │   ├── sandbox-config.js     # Config/schema
+│   │   │       │   ├── macos-sandbox-utils.js # 28KB — macOS Seatbelt profiles
+│   │   │       │   ├── linux-sandbox-utils.js # 42KB — Linux namespaces + seccomp
+│   │   │       │   ├── generate-seccomp-filter.js # 12KB — raw BPF bytecode gen
+│   │   │       │   ├── http-proxy.js         # HTTP egress proxy
+│   │   │       │   ├── socks-proxy.js        # SOCKS proxy
+│   │   │       │   └── sandbox-violation-store.js
+│   │   │       └── utils/
+│   │   │
+│   │   ├── mcpb/                  # MCP Bundle tools (11 files, 75KB)
+│   │   │   └── dist/
+│   │   │       ├── cli/           # pack.js, unpack.js, init.js (26KB scaffolder)
+│   │   │       ├── node/          # files.js, sign.js (12KB), validate.js
+│   │   │       └── shared/        # config.js, log.js
+│   │   │
+│   │   ├── sdk/                   # Anthropic SDK source (40+ files, 232KB)
+│   │   │   ├── client.mjs         # 28KB — main API client
+│   │   │   ├── resources/         # API resources (messages, models, batches, skills)
+│   │   │   ├── lib/
+│   │   │   │   ├── MessageStream.mjs     # 29KB — response streaming
+│   │   │   │   ├── BetaMessageStream.mjs # 31KB — beta streaming
+│   │   │   │   ├── tools/BetaToolRunner.mjs # 18KB — tool use loop
+│   │   │   │   ├── tools/CompactionControl.mjs # Context compaction
+│   │   │   │   └── parser.mjs           # Partial JSON streaming parser
+│   │   │   └── internal/          # Headers, auth, request handling
+│   │   │
+│   │   ├── bedrock-sdk/           # AWS Bedrock (12 files, 36KB)
+│   │   │   ├── client.mjs         # Bedrock API client
+│   │   │   └── core/auth.mjs      # SigV4 signing
+│   │   │
+│   │   ├── vertex-sdk/            # GCP Vertex (7 files, 13KB)
+│   │   │   └── client.mjs         # Vertex AI client with Google auth
+│   │   │
+│   │   └── foundry-sdk/           # Foundry (8 files, 16KB)
+│   │       └── client.mjs         # Foundry client with custom auth
+│   │
+│   └── downloads/                 # Additional packages downloaded from npm
+│       ├── tokenizer/             # Claude's BPE tokenizer
+│       │   ├── claude.json        # 680KB — full vocabulary (64,739 tokens)
+│       │   ├── index.ts           # Tokenizer implementation
+│       │   └── tests/             # Test suite
 │       │
-│       ├── mcpb/                  # MCP Bundle tools (11 files)
-│       │   └── dist/
-│       │       ├── cli/           # Pack/unpack/init CLI
-│       │       ├── node/          # File handling, signing, validation
-│       │       └── shared/        # Config, logging
+│       ├── claude-trace/          # OTEL trace viewer for Claude sessions
+│       │   ├── dist/server.cjs    # 838KB — trace server
+│       │   └── viewer/dist/       # Web UI (HTML + JS + CSS)
 │       │
-│       ├── sdk/                   # Anthropic SDK source (40+ files)
-│       │   ├── client.mjs         # Main client
-│       │   ├── resources/         # API resources (messages, models, batches)
-│       │   ├── lib/               # Streaming, tool runners, parsers
-│       │   └── internal/          # Headers, auth, request handling
-│       │
-│       ├── bedrock-sdk/           # AWS Bedrock (12 files)
-│       ├── vertex-sdk/            # GCP Vertex (7 files)
-│       └── foundry-sdk/           # Foundry (8 files)
+│       └── claude-agent-sdk/      # Agent SDK package
+│           ├── sdk.mjs            # Main SDK — spawns CLI as subprocess
+│           ├── sdk.d.ts           # Full type definitions
+│           ├── bridge.mjs         # Session bridge protocol
+│           ├── browser-sdk.js     # Browser-compatible SDK
+│           ├── embed.js           # Embedding helpers
+│           └── manifest.json      # SDK manifest
 │
 ├── shims/                         # Build-time shims
 │   ├── bun-bundle.ts              # Runtime shim for feature() — returns false
@@ -228,3 +258,58 @@ BG_SESSIONS, WORKFLOW_SCRIPTS, TRANSCRIPT_CLASSIFIER, TOKEN_BUDGET,
 HISTORY_SNIP, BUDDY, TEAMMEM, AGENT_TRIGGERS, WEB_BROWSER_TOOL,
 MESSAGE_ACTIONS, HOOK_PROMPTS, CACHED_MICROCOMPACT, CHICAGO_MCP,
 ABLATION_BASELINE, DUMP_SYSTEM_PROMPT
+
+## What Works vs What Doesn't
+
+### Fully Working
+- All standard tools (Bash, Edit, Read, Write, Grep, Glob, WebFetch, WebSearch, Agent)
+- Terminal UI (full React/Ink REPL with custom flexbox layout)
+- OAuth authentication (same flow as official)
+- MCP server support
+- Slash commands (/help, /clear, /compact, /resume, etc.)
+- Session persistence and resume
+- Plugin system
+- Vim mode
+- Sandbox mode (real @anthropic-ai/sandbox-runtime from npm)
+- AWS Bedrock / GCP Vertex / Foundry backends (real SDKs from npm)
+- Agent SDK integration (set `pathToClaudeCodeExecutable` to `dist/cli.js`)
+
+### Not Working
+- **Computer Use** — full logic extracted (137KB toolCalls.ts) but needs native
+  Swift/Rust binaries for screen capture and input. Could be rebuilt using macOS
+  system commands (screencapture, osascript, pbcopy/pbpaste).
+- **Feature-flagged features** — voice, coordinator, ultraplan, etc. All disabled
+  via feature() shim. The source is there but many depend on backend infra.
+- **Ant-only tools** — TungstenTool, REPLTool, SuggestBackgroundPRTool. Internal
+  tools never available in external builds.
+
+## Source Extraction Summary
+
+| Source | Method | Files | What |
+|--------|--------|-------|------|
+| Original leak | .map file on R2 bucket | 1,929 | Full src/ directory |
+| npm source map | `cli.js.map` in `@anthropic-ai/claude-code` | 4,756 total | Everything bundled into the CLI |
+| npm source map | Same file, `@ant/*` entries | 20 | Computer use + Chrome (private) |
+| npm source map | Same file, `@anthropic-ai/*` entries | 105 | SDK, sandbox, mcpb, bedrock, vertex, foundry |
+| npm registry | `npm pack @anthropic-ai/tokenizer` | 15 | Claude's BPE tokenizer + vocabulary |
+| npm registry | `npm pack @anthropic-ai/claude-trace` | 6 | OTEL session trace viewer |
+| npm registry | `npm pack @anthropic-ai/claude-agent-sdk` | 18 | Agent SDK source + types |
+
+## All @anthropic-ai npm Packages (as of 2026-03-31)
+
+| Package | On npm? | In our repo? | Status |
+|---------|---------|-------------|--------|
+| `@anthropic-ai/claude-code` | Yes | src/ + stubs/ | **Full source extracted** |
+| `@anthropic-ai/claude-agent-sdk` | Yes | stubs/downloads/ | **Downloaded** |
+| `@anthropic-ai/sdk` | Yes | stubs/@anthropic-ai/sdk/ | **Source from map + npm install** |
+| `@anthropic-ai/bedrock-sdk` | Yes | stubs/@anthropic-ai/bedrock-sdk/ | **Source from map + npm install** |
+| `@anthropic-ai/vertex-sdk` | Yes | stubs/@anthropic-ai/vertex-sdk/ | **Source from map + npm install** |
+| `@anthropic-ai/foundry-sdk` | Yes | stubs/@anthropic-ai/foundry-sdk/ | **Source from map + npm install** |
+| `@anthropic-ai/sandbox-runtime` | Yes | stubs/@anthropic-ai/sandbox-runtime/ | **Source from map + npm install** |
+| `@anthropic-ai/mcpb` | Yes | stubs/@anthropic-ai/mcpb/ | **Source from map + npm install** |
+| `@anthropic-ai/tokenizer` | Yes | stubs/downloads/tokenizer/ | **Downloaded** |
+| `@anthropic-ai/claude-trace` | Yes | stubs/downloads/claude-trace/ | **Downloaded** |
+| `@ant/computer-use-mcp` | **No** (private) | stubs/@ant/computer-use-mcp/ | **Source from map** |
+| `@ant/claude-for-chrome-mcp` | **No** (private) | stubs/@ant/claude-for-chrome-mcp/ | **Source from map** |
+| `@ant/computer-use-swift` | **No** (private) | stubs/@ant/computer-use-swift/ | **JS loader only** (binary missing) |
+| `@ant/computer-use-input` | **No** (private) | stubs/@ant/computer-use-input/ | **JS loader only** (binary missing) |
