@@ -324,11 +324,12 @@ export const SettingsSchema = lazySchema(() =>
         ),
       cleanupPeriodDays: z
         .number()
-        .nonnegative()
         .int()
+        .min(1, 'cleanupPeriodDays must be at least 1. Use the --no-session-persistence flag or CLAUDE_CODE_DISABLE_SESSION_PERSISTENCE=1 env var to disable persistence entirely.')
         .optional()
         .describe(
-          'Number of days to retain chat transcripts (default: 30). Setting to 0 disables session persistence entirely: no transcripts are written and existing transcripts are deleted at startup.',
+          'Number of days to retain chat transcripts (default: 30). Must be at least 1. ' +
+            'To disable session persistence, use --no-session-persistence flag or CLAUDE_CODE_DISABLE_SESSION_PERSISTENCE=1.',
         ),
       env: EnvironmentVariablesSchema()
         .optional()
@@ -1058,6 +1059,13 @@ export const SettingsSchema = lazySchema(() =>
             'Patterns are matched against absolute file paths using picomatch. ' +
             'Only applies to User, Project, and Local memory types (Managed/policy files cannot be excluded). ' +
             'Examples: "/home/user/monorepo/CLAUDE.md", "**/code/CLAUDE.md", "**/some-dir/.claude/rules/**"',
+        ),
+      disableSkillShellExecution: z
+        .boolean()
+        .optional()
+        .describe(
+          'Disable inline shell execution (!`cmd` and ```! blocks) in skills, custom slash commands, and plugin commands. ' +
+            'When true, shell command patterns are left as-is in the prompt text without being executed.',
         ),
       pluginTrustMessage: z
         .string()

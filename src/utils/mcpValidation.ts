@@ -16,6 +16,12 @@ export const IMAGE_TOKEN_ESTIMATE = 1600
 const DEFAULT_MAX_MCP_OUTPUT_TOKENS = 25000
 
 /**
+ * Maximum allowed value for _meta["anthropic/maxResultSizeChars"] override.
+ * MCP tools can request up to 500K chars for large results like DB schemas.
+ */
+const MAX_RESULT_SIZE_CHARS_CEILING = 500_000
+
+/**
  * Resolve the MCP output token cap. Precedence:
  *   1. MAX_MCP_OUTPUT_TOKENS env var (explicit user override)
  *   2. tengu_satin_quoll GrowthBook flag's `mcp_tool` key (tokens, not chars —
@@ -148,16 +154,37 @@ async function truncateContentBlocks(
   return result
 }
 
+/**
+ * Resolve the effective max MCP output chars, considering a tool-level
+ * _meta["anthropic/maxResultSizeChars"] override. The override is capped
+ * at MAX_RESULT_SIZE_CHARS_CEILING (500K) to prevent unbounded context bloat.
+ */
+export function resolveMaxMcpOutputChars(metaOverrideChars?: number): number {
+  if (
+    typeof metaOverrideChars === 'number' &&
+    Number.isFinite(metaOverrideChars) &&
+    metaOverrideChars > 0
+  ) {
+    return Math.min(metaOverrideChars, MAX_RESULT_SIZE_CHARS_CEILING)
+  }
+  return getMaxMcpOutputChars()
+}
+
 export async function mcpContentNeedsTruncation(
   content: MCPToolResult,
+  metaOverrideChars?: number,
 ): Promise<boolean> {
   if (!content) return false
+
+  const effectiveMaxTokens = metaOverrideChars
+    ? Math.ceil(resolveMaxMcpOutputChars(metaOverrideChars) / 4)
+    : getMaxMcpOutputTokens()
 
   // Use size check as a heuristic to avoid unnecessary token counting API calls
   const contentSizeEstimate = getContentSizeEstimate(content)
   if (
     contentSizeEstimate <=
-    getMaxMcpOutputTokens() * MCP_TOKEN_COUNT_THRESHOLD_FACTOR
+    effectiveMaxTokens * MCP_TOKEN_COUNT_THRESHOLD_FACTOR
   ) {
     return false
   }
@@ -169,7 +196,7 @@ export async function mcpContentNeedsTruncation(
         : [{ role: 'user' as const, content }]
 
     const tokenCount = await countMessagesTokensWithAPI(messages, [])
-    return !!(tokenCount && tokenCount > getMaxMcpOutputTokens())
+    return !!(tokenCount && tokenCount > effectiveMaxTokens)
   } catch (error) {
     logError(error)
     // Assume no truncation needed on error
@@ -179,11 +206,15 @@ export async function mcpContentNeedsTruncation(
 
 export async function truncateMcpContent(
   content: MCPToolResult,
+  metaOverrideChars?: number,
 ): Promise<MCPToolResult> {
   if (!content) return content
 
-  const maxChars = getMaxMcpOutputChars()
-  const truncationMsg = getTruncationMessage()
+  const maxChars = resolveMaxMcpOutputChars(metaOverrideChars)
+  const effectiveTokens = Math.ceil(maxChars / 4)
+  const truncationMsg = `\n\n[OUTPUT TRUNCATED - exceeded ${effectiveTokens} token limit]
+
+The tool output was truncated. If this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data. If pagination is not available, inform the user that you are working with truncated output and results may be incomplete.`
 
   if (typeof content === 'string') {
     return truncateString(content, maxChars) + truncationMsg
@@ -199,10 +230,11 @@ export async function truncateMcpContent(
 
 export async function truncateMcpContentIfNeeded(
   content: MCPToolResult,
+  metaOverrideChars?: number,
 ): Promise<MCPToolResult> {
-  if (!(await mcpContentNeedsTruncation(content))) {
+  if (!(await mcpContentNeedsTruncation(content, metaOverrideChars))) {
     return content
   }
 
-  return await truncateMcpContent(content)
+  return await truncateMcpContent(content, metaOverrideChars)
 }

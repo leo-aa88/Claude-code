@@ -454,6 +454,10 @@ const IMAGE_MIME_TYPES = new Set([
 ])
 
 function getConnectionTimeoutMs(): number {
+  // MCP_CONNECTION_NONBLOCKING bounds connections at 5s instead of 30s
+  if (process.env.MCP_CONNECTION_NONBLOCKING === 'true') {
+    return parseInt(process.env.MCP_TIMEOUT || '', 10) || 5000
+  }
   return parseInt(process.env.MCP_TIMEOUT || '', 10) || 30000
 }
 
@@ -1860,6 +1864,11 @@ export const fetchToolsForClient = memoizeWithLRU(
               for (let attempt = 0; ; attempt++) {
                 try {
                   const connectedClient = await ensureConnectedClient(client)
+                  // Read _meta["anthropic/maxResultSizeChars"] from tool definition
+                  const toolMetaMaxResultSizeChars =
+                    typeof tool._meta?.['anthropic/maxResultSizeChars'] === 'number'
+                      ? (tool._meta['anthropic/maxResultSizeChars'] as number)
+                      : undefined
                   const mcpResult = await callMCPToolWithUrlElicitationRetry({
                     client: connectedClient,
                     clientConnection: client,
@@ -1868,6 +1877,7 @@ export const fetchToolsForClient = memoizeWithLRU(
                     meta,
                     signal: context.abortController.signal,
                     setAppState: context.setAppState,
+                    metaMaxResultSizeChars: toolMetaMaxResultSizeChars,
                     onProgress:
                       onProgress && toolUseId
                         ? progressData => {
@@ -2721,6 +2731,7 @@ export async function processMCPResult(
   result: unknown,
   tool: string, // Tool name for validation (e.g., "search")
   name: string, // Server name for IDE check and transformation (e.g., "slack")
+  metaMaxResultSizeChars?: number, // _meta["anthropic/maxResultSizeChars"] override
 ): Promise<MCPToolResult> {
   const { content, type, schema } = await transformMCPResult(result, tool, name)
 
@@ -2731,7 +2742,7 @@ export async function processMCPResult(
   }
 
   // Check if content needs truncation (i.e., is too large)
-  if (!(await mcpContentNeedsTruncation(content))) {
+  if (!(await mcpContentNeedsTruncation(content, metaMaxResultSizeChars))) {
     return content
   }
 
@@ -2744,7 +2755,7 @@ export async function processMCPResult(
       reason: 'env_disabled',
       sizeEstimateTokens,
     } as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS)
-    return await truncateMcpContentIfNeeded(content)
+    return await truncateMcpContentIfNeeded(content, metaMaxResultSizeChars)
   }
 
   // Save large output to file and return instructions for reading it
@@ -2761,7 +2772,7 @@ export async function processMCPResult(
       reason: 'contains_images',
       sizeEstimateTokens,
     } as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS)
-    return await truncateMcpContentIfNeeded(content)
+    return await truncateMcpContentIfNeeded(content, metaMaxResultSizeChars)
   }
 
   // Generate a unique ID for the persisted file (server__tool-timestamp)
@@ -2821,6 +2832,7 @@ export async function callMCPToolWithUrlElicitationRetry({
   onProgress,
   callToolFn = callMCPTool,
   handleElicitation,
+  metaMaxResultSizeChars,
 }: {
   client: ConnectedMCPServer
   clientConnection: MCPServerConnection
@@ -2838,7 +2850,10 @@ export async function callMCPToolWithUrlElicitationRetry({
     meta?: Record<string, unknown>
     signal: AbortSignal
     onProgress?: (data: MCPProgress) => void
+    metaMaxResultSizeChars?: number
   }) => Promise<MCPToolCallResult>
+  /** Tool-level _meta["anthropic/maxResultSizeChars"] override (up to 500K) */
+  metaMaxResultSizeChars?: number
   /** Handler for URL elicitations when no hook handles them.
    * In print/SDK mode, delegates to structuredIO. In REPL, falls back to queue. */
   handleElicitation?: (
@@ -2857,6 +2872,7 @@ export async function callMCPToolWithUrlElicitationRetry({
         meta,
         signal,
         onProgress,
+        metaMaxResultSizeChars,
       })
     } catch (error) {
       // The MCP SDK's Protocol creates plain McpError (not UrlElicitationRequiredError)
@@ -3033,6 +3049,7 @@ async function callMCPTool({
   meta,
   signal,
   onProgress,
+  metaMaxResultSizeChars,
 }: {
   client: ConnectedMCPServer
   tool: string
@@ -3040,6 +3057,8 @@ async function callMCPTool({
   meta?: Record<string, unknown>
   signal: AbortSignal
   onProgress?: (data: MCPProgress) => void
+  /** Tool-level _meta["anthropic/maxResultSizeChars"] override (up to 500K) */
+  metaMaxResultSizeChars?: number
 }): Promise<{
   content: MCPToolResult
   _meta?: Record<string, unknown>
@@ -3128,13 +3147,18 @@ async function callMCPTool({
         Array.isArray(result.content) &&
         result.content.length > 0
       ) {
-        const firstContent = result.content[0]
-        if (
-          firstContent &&
-          typeof firstContent === 'object' &&
-          'text' in firstContent
-        ) {
-          errorDetails = firstContent.text
+        // Collect text from ALL content blocks, not just the first one.
+        // MCP servers can return multi-element error content (e.g. summary + details).
+        const textParts = result.content
+          .filter(
+            (block: unknown) =>
+              block &&
+              typeof block === 'object' &&
+              'text' in (block as Record<string, unknown>),
+          )
+          .map((block: { text: string }) => block.text)
+        if (textParts.length > 0) {
+          errorDetails = textParts.join('\n')
         }
       } else if ('error' in result) {
         // Fallback for legacy error format
@@ -3168,7 +3192,7 @@ async function callMCPTool({
       })
     }
 
-    const content = await processMCPResult(result, tool, name)
+    const content = await processMCPResult(result, tool, name, metaMaxResultSizeChars)
     return {
       content,
       _meta: result._meta as Record<string, unknown> | undefined,

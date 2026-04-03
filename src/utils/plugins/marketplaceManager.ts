@@ -1121,6 +1121,19 @@ async function cacheMarketplaceFromGit(
     logForDebugging(`git pull failed, will re-clone: ${pullResult.stderr}`, {
       level: 'warn',
     })
+    // CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE: keep the existing cache
+    // when git pull fails, useful in offline environments
+    if (
+      process.env.CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE &&
+      process.env.CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE !== '0' &&
+      process.env.CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE !== 'false'
+    ) {
+      logForDebugging(
+        `CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE is set — keeping existing marketplace cache at ${cachePath}`,
+        { level: 'warn' },
+      )
+      return
+    }
   } else {
     logForDebugging(
       `sparse-checkout reconcile requires re-clone: ${reconcileResult.stderr}`,

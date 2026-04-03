@@ -607,11 +607,9 @@ export const CMDLET_ALLOWLIST: Record<string, CommandConfig> = Object.assign(
         '-DestinationPrefix',
       ],
     },
-    'get-dnsclientcache': {
-      // SECURITY: -CimSession/-ThrottleLimit excluded. -CimSession connects to
-      // a remote host (network request). Previously empty config = all flags OK.
-      safeFlags: ['-Entry', '-Name', '-Type', '-Status', '-Section', '-Data'],
-    },
+    // SECURITY: get-dnsclientcache REMOVED from auto-allow (DNS cache privacy).
+    // Previously auto-allowed, but DNS cache contents reveal browsing history.
+    // Now requires explicit user approval.
     'get-dnsclient': {
       safeFlags: ['-InterfaceIndex', '-InterfaceAlias'],
     },
@@ -701,7 +699,8 @@ export const CMDLET_ALLOWLIST: Record<string, CommandConfig> = Object.assign(
       // are SKIPPED. Reject any positional argument — only bare `ipconfig` or
       // `ipconfig /all` (read-only display) allowed. Windows ipconfig only uses
       // /flags (display), macOS ipconfig uses subcommands (get/set/waitall).
-      safeFlags: ['/all', '/displaydns', '/allcompartments'],
+      // SECURITY: /displaydns removed from auto-allow (DNS cache privacy).
+      safeFlags: ['/all', '/allcompartments'],
       additionalCommandIsDangerousCallback: (
         _cmd: string,
         element?: ParsedCommandElement,

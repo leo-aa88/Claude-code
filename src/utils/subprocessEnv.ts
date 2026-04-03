@@ -1,3 +1,4 @@
+import { delimiter } from 'path'
 import { isEnvTruthy } from './envUtils.js'
 
 /**
@@ -67,6 +68,24 @@ const GHA_SUBPROCESS_SCRUB = [
 let _getUpstreamProxyEnv: (() => Record<string, string>) | undefined
 
 /**
+ * Plugin bin/ directories to prepend to PATH for subprocess invocations.
+ * Registered by the plugin loader after plugins are loaded.
+ */
+let _pluginBinPaths: string[] = []
+
+/**
+ * Register plugin bin/ directories so they are prepended to PATH
+ * in all subprocess environments (Bash, MCP, hooks, LSP).
+ */
+export function registerPluginBinPaths(paths: string[]): void {
+  _pluginBinPaths = paths
+}
+
+export function getPluginBinPaths(): string[] {
+  return _pluginBinPaths
+}
+
+/**
  * Called from init.ts to wire up the proxy env function after the upstreamproxy
  * module has been lazily loaded. Must be called before any subprocess is spawned.
  */
@@ -74,6 +93,19 @@ export function registerUpstreamProxyEnvFn(
   fn: () => Record<string, string>,
 ): void {
   _getUpstreamProxyEnv = fn
+}
+
+/**
+ * Prepend plugin bin/ paths to PATH if any are registered.
+ */
+function injectPluginBinPaths(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (_pluginBinPaths.length === 0) return env
+  const binPrefix = _pluginBinPaths.join(delimiter)
+  const currentPath = env.PATH ?? ''
+  // Shallow copy only if we haven't already (caller may pass process.env directly)
+  const out = env === process.env ? { ...env } : env
+  out.PATH = binPrefix + delimiter + currentPath
+  return out
 }
 
 export function subprocessEnv(): NodeJS.ProcessEnv {
@@ -84,9 +116,11 @@ export function subprocessEnv(): NodeJS.ProcessEnv {
   const proxyEnv = _getUpstreamProxyEnv?.() ?? {}
 
   if (!isEnvTruthy(process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB)) {
-    return Object.keys(proxyEnv).length > 0
-      ? { ...process.env, ...proxyEnv }
-      : process.env
+    const base =
+      Object.keys(proxyEnv).length > 0
+        ? { ...process.env, ...proxyEnv }
+        : process.env
+    return injectPluginBinPaths(base)
   }
   const env = { ...process.env, ...proxyEnv }
   for (const k of GHA_SUBPROCESS_SCRUB) {
@@ -95,5 +129,5 @@ export function subprocessEnv(): NodeJS.ProcessEnv {
     // secrets like INPUT_ANTHROPIC_API_KEY. No-op for vars that aren't action inputs.
     delete env[`INPUT_${k}`]
   }
-  return env
+  return injectPluginBinPaths(env)
 }

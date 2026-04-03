@@ -91,6 +91,48 @@ const BASH_SILENT_COMMANDS = new Set(['mv', 'cp', 'rm', 'mkdir', 'rmdir', 'chmod
  * position, as they're pure output/status commands that don't affect the read/search
  * nature of the pipeline (e.g. `ls dir && echo "---" && ls dir2` is still a read).
  */
+/**
+ * Extract the file path from simple file-viewing commands (cat, sed -n, head, tail).
+ * Returns the path if the command is a simple single-file view, undefined otherwise.
+ * This allows the Edit tool to work on files viewed via Bash without a separate Read call.
+ */
+function extractViewedFilePath(command: string): string | undefined {
+  // Match: cat <file>, head <file>, tail <file>, sed -n '...' <file>
+  // Only handle simple single-file cases, not pipes or complex commands
+  const trimmed = command.trim()
+  // Skip compound commands
+  if (/[&|;]/.test(trimmed)) return undefined
+  // Skip redirections
+  if (/[<>]/.test(trimmed)) return undefined
+
+  // cat <flags> <file>
+  const catMatch = trimmed.match(/^cat\s+(?:-[a-zA-Z]*\s+)*(.+)$/)
+  if (catMatch) {
+    const file = catMatch[1]!.trim()
+    // Skip if multiple files or glob patterns
+    if (/\s/.test(file) || /[*?[\]]/.test(file)) return undefined
+    return file
+  }
+
+  // head/tail <flags> <file>
+  const htMatch = trimmed.match(/^(?:head|tail)\s+(?:-[a-zA-Z0-9]*\s+)*(.+)$/)
+  if (htMatch) {
+    const file = htMatch[1]!.trim()
+    if (/\s/.test(file) || /[*?[\]]/.test(file)) return undefined
+    return file
+  }
+
+  // sed -n '...' <file>
+  const sedMatch = trimmed.match(/^sed\s+-n\s+(?:'[^']*'|"[^"]*")\s+(.+)$/)
+  if (sedMatch) {
+    const file = sedMatch[1]!.trim()
+    if (/\s/.test(file) || /[*?[\]]/.test(file)) return undefined
+    return file
+  }
+
+  return undefined
+}
+
 export function isSearchOrReadBashCommand(command: string): {
   isSearch: boolean;
   isRead: boolean;
@@ -799,6 +841,26 @@ export const BashTool = buildTool({
         isImage = false;
       }
     }
+    // Track files viewed via Bash (cat, sed -n, head, tail) so the Edit tool
+    // can work on them without requiring a separate Read call first.
+    if (result.code === 0 && !wasInterrupted) {
+      const filePath = extractViewedFilePath(input.command);
+      if (filePath) {
+        const absPath = expandPath(filePath);
+        try {
+          const content = await getFsImplementation().readFile(absPath, { encoding: 'utf8' });
+          toolUseContext.readFileState.set(absPath, {
+            content,
+            timestamp: getFileModificationTime(absPath),
+            offset: undefined,
+            limit: undefined,
+          });
+        } catch {
+          // File may not be readable (binary, missing, etc.) — skip
+        }
+      }
+    }
+
     const data: Out = {
       stdout: compressedStdout,
       stderr: stderrForShellReset,

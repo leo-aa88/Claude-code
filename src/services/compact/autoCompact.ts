@@ -342,7 +342,9 @@ export async function autoCompactIfNeeded(
     const nextFailures = prevFailures + 1
     if (nextFailures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES) {
       logForDebugging(
-        `autocompact: circuit breaker tripped after ${nextFailures} consecutive failures — skipping future attempts this session`,
+        `autocompact: circuit breaker tripped — context refilled to the limit immediately after compacting ${nextFailures} times in a row. ` +
+          `This usually means the conversation has too much non-compactable content (e.g. large tool results, many system messages). ` +
+          `Try: (1) start a new session with /clear, (2) reduce the number of large tool results, or (3) increase the model's context window.`,
         { level: 'warn' },
       )
     }

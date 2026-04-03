@@ -3,7 +3,8 @@
  * Hooks are user-defined shell commands that can be executed at various points
  * in Claude Code's lifecycle.
  */
-import { basename } from 'path'
+import { basename, join } from 'path'
+import { writeFileSync } from 'fs'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { pathExists } from './file.js'
 import { wrapSpawn } from './ShellCommand.js'
@@ -344,6 +345,9 @@ export interface HookResult {
   stopReason?: string
   permissionBehavior?: 'ask' | 'deny' | 'allow' | 'passthrough'
   hookPermissionDecisionReason?: string
+  /** True when a PreToolUse hook returned permissionDecision: "defer".
+   *  Headless sessions (-p) can pause at this tool call and resume via --resume. */
+  deferred?: boolean
   additionalContext?: string
   initialUserMessage?: string
   updatedInput?: Record<string, unknown>
@@ -373,6 +377,35 @@ export type AggregatedHookResult = {
   elicitationResponse?: ElicitationResponse
   elicitationResultResponse?: ElicitationResponse
   retry?: boolean
+}
+
+/**
+ * Maximum hook output size (in characters) before it's saved to disk.
+ * Hook output over this limit is written to a file and replaced with
+ * a file path + preview in context, preventing context bloat.
+ */
+const HOOK_OUTPUT_DISK_THRESHOLD = 50_000
+const HOOK_OUTPUT_PREVIEW_LENGTH = 500
+
+/**
+ * If hook output exceeds HOOK_OUTPUT_DISK_THRESHOLD, save it to a temp file
+ * and return a truncated preview with the file path. Otherwise return as-is.
+ */
+function truncateHookOutputToDisk(output: string, hookName: string): string {
+  if (output.length <= HOOK_OUTPUT_DISK_THRESHOLD) return output
+
+  try {
+    const tmpDir = require('os').tmpdir()
+    const fileName = `claude-hook-${hookName.replace(/[^a-zA-Z0-9-_]/g, '_')}-${Date.now()}.txt`
+    const filePath = join(tmpDir, fileName)
+    writeFileSync(filePath, output, 'utf8')
+    const preview = output.slice(0, HOOK_OUTPUT_PREVIEW_LENGTH)
+    return `[Hook output saved to ${filePath} (${output.length} chars)]\n\nPreview:\n${preview}\n\n[... truncated, read the file for full output]`
+  } catch {
+    // If file write fails, return truncated preview inline
+    const preview = output.slice(0, HOOK_OUTPUT_PREVIEW_LENGTH)
+    return `${preview}\n\n[... truncated: ${output.length} total chars, file save failed]`
+  }
 }
 
 /**
@@ -421,11 +454,11 @@ function parseHookOutput(stdout: string): {
         decision: '"approve" | "block" (optional)',
         reason: 'string (optional)',
         systemMessage: 'string (optional)',
-        permissionDecision: '"allow" | "deny" | "ask" (optional)',
+        permissionDecision: '"allow" | "deny" | "ask" | "defer" (optional)',
         hookSpecificOutput: {
           'for PreToolUse': {
             hookEventName: '"PreToolUse"',
-            permissionDecision: '"allow" | "deny" | "ask" (optional)',
+            permissionDecision: '"allow" | "deny" | "ask" | "defer" (optional)',
             permissionDecisionReason: 'string (optional)',
             updatedInput: 'object (optional) - Modified tool input to use',
           },
@@ -566,10 +599,17 @@ function processHookJSONOutput({
       case 'ask':
         result.permissionBehavior = 'ask'
         break
+      case 'defer':
+        // Headless sessions (-p) can pause at a tool call and resume with
+        // -p --resume to have the hook re-evaluate. In interactive sessions,
+        // defer falls back to 'ask'.
+        result.permissionBehavior = 'ask'
+        result.deferred = true
+        break
       default:
         // Handle unknown decision types as errors
         throw new Error(
-          `Unknown hook permissionDecision type: ${json.hookSpecificOutput.permissionDecision}. Valid types are: allow, deny, ask`,
+          `Unknown hook permissionDecision type: ${json.hookSpecificOutput.permissionDecision}. Valid types are: allow, deny, ask, defer`,
         )
     }
   }
@@ -609,6 +649,10 @@ function processHookJSONOutput({
               break
             case 'ask':
               result.permissionBehavior = 'ask'
+              break
+            case 'defer':
+              result.permissionBehavior = 'ask'
+              result.deferred = true
               break
           }
         }
@@ -2615,6 +2659,9 @@ async function* executeHooks({
 
       // Fall back to existing logic for non-JSON output
       if (result.status === 0) {
+        // Hook output over 50K chars is saved to disk with a file path + preview
+        // instead of being injected directly into context
+        const hookContent = truncateHookOutputToDisk(result.stdout.trim(), hookName)
         emitHookResponse({
           hookId,
           hookName,
@@ -2631,7 +2678,7 @@ async function* executeHooks({
             hookName,
             toolUseID,
             hookEvent,
-            content: result.stdout.trim(),
+            content: hookContent,
             stdout: result.stdout,
             stderr: result.stderr,
             exitCode: result.status,

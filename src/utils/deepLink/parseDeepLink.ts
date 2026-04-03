@@ -29,14 +29,18 @@ export type DeepLinkAction = {
 }
 
 /**
- * Check if a string contains ASCII control characters (0x00-0x1F, 0x7F).
- * These can act as command separators in shells (newlines, carriage returns, etc.).
- * Allows printable ASCII and Unicode (CJK, emoji, accented chars, etc.).
+ * Check if a string contains dangerous ASCII control characters.
+ * Newlines (0x0A) and carriage returns (0x0D) are allowed in query params
+ * to support multi-line prompts via encoded %0A, but blocked in cwd/repo
+ * where they can act as command separators.
+ * All other control chars (0x00-0x09, 0x0B-0x0C, 0x0E-0x1F, 0x7F) are always rejected.
  */
-function containsControlChars(s: string): boolean {
+function containsControlChars(s: string, allowNewlines = false): boolean {
   for (let i = 0; i < s.length; i++) {
     const code = s.charCodeAt(i)
-    if (code <= 0x1f || code === 0x7f) {
+    if (code === 0x7f) return true
+    if (code <= 0x1f) {
+      if (allowNewlines && (code === 0x0a || code === 0x0d)) continue
       return true
     }
   }
@@ -139,7 +143,8 @@ export function parseDeepLink(uri: string): DeepLinkAction {
   if (rawQuery && rawQuery.trim().length > 0) {
     // Strip hidden Unicode characters (ASCII smuggling / hidden prompt injection)
     query = partiallySanitizeUnicode(rawQuery.trim())
-    if (containsControlChars(query)) {
+    // Allow newlines in query for multi-line prompts (encoded as %0A in URLs)
+    if (containsControlChars(query, true)) {
       throw new Error('Deep link query contains disallowed control characters')
     }
     if (query.length > MAX_QUERY_LENGTH) {

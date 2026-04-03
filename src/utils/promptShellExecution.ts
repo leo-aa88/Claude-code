@@ -6,6 +6,7 @@ import { errorMessage, MalformedCommandError, ShellError } from './errors.js'
 import type { FrontmatterShell } from './frontmatterParser.js'
 import { createAssistantMessage } from './messages.js'
 import { hasPermissionsToUseTool } from './permissions/permissions.js'
+import { getSettings_DEPRECATED } from './settings/settings.js'
 import { processToolResultBlock } from './toolResultStorage.js'
 
 // Narrow structural slice both BashTool and PowerShellTool satisfy. We can't
@@ -73,6 +74,14 @@ export async function executeShellCommandsInPrompt(
   shell?: FrontmatterShell,
 ): Promise<string> {
   let result = text
+
+  // Check if shell execution is disabled via settings
+  if (getSettings_DEPRECATED()?.disableSkillShellExecution) {
+    logForDebugging(
+      `Shell execution disabled via disableSkillShellExecution setting — skipping commands in ${slashCommandName}`,
+    )
+    return result
+  }
 
   // Resolve the tool once. `shell === undefined` and `shell === 'bash'` both
   // hit BashTool. PowerShell only when the runtime gate allows — a skill

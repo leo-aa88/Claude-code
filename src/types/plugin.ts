@@ -67,6 +67,9 @@ export type LoadedPlugin = {
   mcpServers?: Record<string, McpServerConfig>
   lspServers?: Record<string, LspServerConfig>
   settings?: Record<string, unknown>
+  /** Absolute path to plugin's bin/ directory, if it exists.
+   *  Executables here are prepended to PATH for Bash tool invocations. */
+  binPath?: string
 }
 
 export type PluginComponent =

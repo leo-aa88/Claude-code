@@ -1,5 +1,5 @@
 import { c as _c } from "react/compiler-runtime";
-import stripAnsi from 'strip-ansi';
+import stripAnsi from '../../utils/stripAnsi.js';
 import { Box, Text } from '../../ink.js';
 import { formatFileSize } from '../../utils/format.js';
 import { MessageResponse } from '../MessageResponse.js';

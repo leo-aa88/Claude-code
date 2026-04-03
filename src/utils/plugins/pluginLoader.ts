@@ -1376,6 +1376,7 @@ export async function createPluginFromPath(
     agentsDirExists,
     skillsDirExists,
     outputStylesDirExists,
+    binDirExists,
   ] = await Promise.all([
     !manifest.commands ? pathExists(join(pluginPath, 'commands')) : false,
     !manifest.agents ? pathExists(join(pluginPath, 'agents')) : false,
@@ -1383,7 +1384,14 @@ export async function createPluginFromPath(
     !manifest.outputStyles
       ? pathExists(join(pluginPath, 'output-styles'))
       : false,
+    pathExists(join(pluginPath, 'bin')),
   ])
+
+  // Plugins can ship executables under bin/ that are available as bare
+  // commands from the Bash tool (prepended to PATH in subprocess env)
+  if (binDirExists) {
+    plugin.binPath = join(pluginPath, 'bin')
+  }
 
   const commandsPath = join(pluginPath, 'commands')
   if (commandsDirExists) {
@@ -3279,6 +3287,15 @@ function mergePluginSettings(
  * Called after loadAllPlugins resolves.
  */
 export function cachePluginSettings(plugins: LoadedPlugin[]): void {
+  // Register plugin bin/ directories so they're on PATH for subprocess invocations
+  const binPaths = plugins
+    .filter(p => p.enabled !== false && p.binPath)
+    .map(p => p.binPath!)
+  if (binPaths.length > 0) {
+    const { registerPluginBinPaths } = require('../subprocessEnv.js') as typeof import('../subprocessEnv.js')
+    registerPluginBinPaths(binPaths)
+  }
+
   const settings = mergePluginSettings(plugins)
   setPluginSettingsBase(settings)
   // Only bust the session settings cache if there are actually plugin settings

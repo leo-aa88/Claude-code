@@ -250,7 +250,7 @@ export const PermissionUpdateDestinationSchema = lazySchema(() =>
 )
 
 export const PermissionBehaviorSchema = lazySchema(() =>
-  z.enum(['allow', 'deny', 'ask']),
+  z.enum(['allow', 'deny', 'ask', 'defer']),
 )
 
 export const PermissionRuleValueSchema = lazySchema(() =>
